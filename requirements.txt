@@ -1,0 +1,23 @@
+# Core
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+python-dotenv>=1.0.0
+pydantic>=2.9.0
+
+# Data
+requests>=2.32.0
+yfinance>=0.2.50
+
+# Tastytrade SDK
+tastytrade>=13.0.0
+
+# Quant
+numpy>=2.0.0
+scipy>=1.14.0
+
+# Database
+psycopg2-binary>=2.9.0
+
+# LLM (Phase 2+)
+anthropic>=0.40.0
+openai>=1.50.0

@@ -1,0 +1,17 @@
+[Unit]
+Description=NEXUS Multi-AI Trading Orchestrator API
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__HOME__/Nexus
+Environment=PATH=__HOME__/Nexus/venv/bin
+ExecStart=__HOME__/Nexus/venv/bin/uvicorn api.main:app --host 0.0.0.0 --port 8001
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
