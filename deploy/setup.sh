@@ -14,8 +14,18 @@ echo "=== NEXUS EC2 setup ==="
 
 # ── System packages ───────────────────────────────────────────────────────────
 sudo apt-get update -qq
-sudo apt-get install -y python3.11 python3.11-venv python3.11-dev \
-    postgresql postgresql-contrib libpq-dev git curl
+sudo apt-get install -y software-properties-common curl git libpq-dev \
+    postgresql postgresql-contrib
+
+# Add deadsnakes PPA if python3.11 not already present
+if ! command -v python3.11 &>/dev/null; then
+    echo "--- Adding deadsnakes PPA for Python 3.11"
+    sudo add-apt-repository -y ppa:deadsnakes/ppa
+    sudo apt-get update -qq
+    sudo apt-get install -y python3.11 python3.11-venv python3.11-dev
+else
+    echo "--- Python 3.11 already installed: $(python3.11 --version)"
+fi
 
 # ── PostgreSQL ────────────────────────────────────────────────────────────────
 echo "--- Setting up PostgreSQL"
