@@ -252,3 +252,69 @@ def get_iv_history(symbol: str, days: int = 252) -> list:
             (symbol, days),
         )
         return [row["atm_iv"] for row in cur.fetchall()]
+
+
+# ── Agent output helpers (Phase 2+) ──────────────────────────────────────────
+
+def insert_agent_output(
+    run_id: int,
+    agent: str,
+    output_data: dict | str,
+    input_data: dict = None,
+    symbol: str = None,
+    score: float = None,
+    tokens_in: int = 0,
+    tokens_out: int = 0,
+    latency_ms: int = 0,
+    model: str = "",
+) -> int:
+    import json as _json
+    with cursor() as cur:
+        cur.execute(
+            """INSERT INTO agent_outputs
+               (run_id, agent, symbol, input_data, output_data,
+                score, tokens_in, tokens_out, latency_ms, model)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+               RETURNING id""",
+            (
+                run_id, agent, symbol,
+                _json.dumps(input_data)  if input_data  is not None else None,
+                _json.dumps(output_data) if isinstance(output_data, dict) else output_data,
+                score, tokens_in, tokens_out, latency_ms, model,
+            ),
+        )
+        return cur.fetchone()["id"]
+
+
+def get_agent_output(run_id: int, agent: str) -> dict | None:
+    with cursor() as cur:
+        cur.execute(
+            """SELECT * FROM agent_outputs
+               WHERE run_id = %s AND agent = %s
+               ORDER BY id DESC LIMIT 1""",
+            (run_id, agent),
+        )
+        return cur.fetchone()
+
+
+def get_agent_outputs(run_id: int, agent_prefix: str = None) -> list:
+    with cursor() as cur:
+        if agent_prefix:
+            cur.execute(
+                "SELECT * FROM agent_outputs WHERE run_id = %s AND agent LIKE %s ORDER BY id",
+                (run_id, f"{agent_prefix}%"),
+            )
+        else:
+            cur.execute(
+                "SELECT * FROM agent_outputs WHERE run_id = %s ORDER BY id",
+                (run_id,),
+            )
+        return cur.fetchall()
+
+
+def update_run_regime(run_id: int, regime: str):
+    with cursor() as cur:
+        cur.execute(
+            "UPDATE runs SET market_regime = %s WHERE id = %s",
+            (regime, run_id),
+        )

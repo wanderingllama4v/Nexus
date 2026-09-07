@@ -70,3 +70,64 @@ SCANNER = {
 
 # ── Risk-free rate (used for Black-Scholes fallback in quant_lib) ──────────────
 RISK_FREE_RATE = 0.05
+
+# ── Sector ETFs (Phase 2: ATLAS + COMPASS) ────────────────────────────────────
+SECTOR_ETFS = {
+    "XLK":  "Technology",
+    "SMH":  "Semiconductors",
+    "XLC":  "Communication",
+    "XLY":  "Consumer Discretionary",
+    "XLF":  "Financials",
+    "XLV":  "Healthcare",
+    "XLI":  "Industrials",
+    "XLE":  "Energy",
+    "XLB":  "Materials",
+    "XLRE": "Real Estate",
+    "XLU":  "Utilities",
+    "XLP":  "Consumer Staples",
+    "GLD":  "Gold",
+    "SPY":  "S&P 500",
+    "QQQ":  "Nasdaq 100",
+    "IWM":  "Russell 2000",
+}
+
+# Symbol → sector ETF mapping for COMPASS filtering
+SYMBOL_SECTORS = {
+    "NVDA":  ["XLK", "SMH"],
+    "AMD":   ["XLK", "SMH"],
+    "AVGO":  ["XLK", "SMH"],
+    "ARM":   ["XLK", "SMH"],
+    "MU":    ["XLK", "SMH"],
+    "AAPL":  ["XLK"],
+    "MSFT":  ["XLK"],
+    "GOOGL": ["XLK", "XLC"],
+    "META":  ["XLC"],
+    "AMZN":  ["XLY", "XLK"],
+    "TSLA":  ["XLY"],
+    "PLTR":  ["XLK"],
+    "SOFI":  ["XLF"],
+    "COIN":  ["XLF"],
+    "MSTR":  ["XLK"],
+    "MRNA":  ["XLV"],
+    "BNTX":  ["XLV"],
+    "LLY":   ["XLV"],
+    "NVAX":  ["XLV"],
+    "SPY":   ["SPY"],
+    "QQQ":   ["QQQ"],
+    "IWM":   ["IWM"],
+    "GLD":   ["GLD"],
+    "XLK":   ["XLK"],
+    "XLE":   ["XLE"],
+}
+
+# ── LLM models ────────────────────────────────────────────────────────────────
+LLM = {
+    "atlas":   "gpt-4o",
+    "compass": "gpt-4o",
+    "hunter":  "gpt-4o",       # Phase 3
+    "edge":    "gpt-4o",       # Phase 3
+    "judge":   "gpt-4o",       # Phase 4
+    "analyst": "claude-opus-4-8",  # Phase 3
+    "sentinel":"claude-opus-4-8",  # Phase 4
+    "scout":   "sonar-pro",    # Perplexity
+}

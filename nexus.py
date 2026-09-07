@@ -1,28 +1,36 @@
 """
-nexus.py — NEXUS Phase 1 Orchestrator
+nexus.py — NEXUS Phase 2 Orchestrator
 
-Runs the full Phase 1 pipeline:
-  1. FLOW SCANNER  → symbol_universe
-  2. QUANT ENGINE  → symbol_scans
-  3. OPTIONS SCANNER → contract_scans
-  4. Print report
+Full Phase 2 pipeline:
+  1. SCOUT         → agent_outputs (news, macro, earnings, events)
+  2. ATLAS         → market regime + runs.market_regime
+  3. COMPASS       → sector rotation + filtered symbol universe
+  4. FLOW SCANNER  → symbol_universe (using COMPASS-filtered universe)
+  5. QUANT ENGINE  → symbol_scans
+  6. OPTIONS SCANNER → contract_scans
+  7. Print report
 
 Usage:
   python nexus.py
   python nexus.py --symbols NVDA,AAPL,TSLA
-  python nexus.py --resume-run-id 42        # skip flow+quant, re-run scanner only
-  python nexus.py --init-db                 # create tables and exit
+  python nexus.py --phase1                   # skip Phase 2 agents (faster)
+  python nexus.py --resume-run-id 42         # skip all to options scan only
+  python nexus.py --init-db                  # create tables and exit
 """
 
 import argparse
+import json
 import sys
 from datetime import datetime
 
 from shared import db
 from shared.config import SCAN_UNIVERSE
-import components.flow_scanner  as flow_scanner
-import components.quant         as quant
+import components.flow_scanner    as flow_scanner
+import components.quant           as quant
 import components.options_scanner as options_scanner
+import components.scout           as scout
+import components.atlas           as atlas
+import components.compass         as compass
 
 
 def _log(msg: str):
@@ -33,14 +41,52 @@ def _separator(char: str = "─", width: int = 70):
     print(char * width)
 
 
+def _print_agent_summary(run_id: int):
+    """Print ATLAS regime and COMPASS sector rotation summary."""
+    atlas_row = db.get_agent_output(run_id, "atlas")
+    if atlas_row:
+        try:
+            d = json.loads(atlas_row["output_data"]) if isinstance(atlas_row["output_data"], str) else atlas_row["output_data"]
+            print(f"\n  ATLAS REGIME: {d.get('regime','?')} "
+                  f"(confidence={d.get('confidence','?')}%, "
+                  f"risk={d.get('risk_level','?')}, "
+                  f"VIX={d.get('vix_signal','?')}, "
+                  f"breadth={d.get('breadth','?')})")
+            print(f"  Favored: {d.get('favored_sectors',[])}  |  "
+                  f"Avoid: {d.get('avoid_sectors',[])}")
+            print(f"  {d.get('rationale','')}")
+        except Exception:
+            pass
+
+    compass_row = db.get_agent_output(run_id, "compass")
+    if compass_row:
+        try:
+            d = json.loads(compass_row["output_data"]) if isinstance(compass_row["output_data"], str) else compass_row["output_data"]
+            top = [s["etf"] for s in d.get("ranked_sectors", [])[:5]]
+            filtered = d.get("filtered_universe", [])
+            avoid_sym = d.get("avoid_symbols", [])
+            print(f"\n  COMPASS SECTORS: {top}")
+            print(f"  Active universe ({len(filtered)}): {', '.join(filtered)}")
+            if avoid_sym:
+                reasons = d.get("avoid_reason", {})
+                avoid_str = ", ".join(f"{s}({reasons.get(s, '?')})" for s in avoid_sym)
+                print(f"  Avoiding: {avoid_str}")
+            print(f"  Bias: {d.get('direction_bias','?')} | {d.get('rationale','')}")
+        except Exception:
+            pass
+
+
 def _print_report(run_id: int):
     _separator("═")
-    print(f"  NEXUS — PHASE 1 REPORT   run_id={run_id}   {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    print(f"  NEXUS — PHASE 2 REPORT   run_id={run_id}   {datetime.now().strftime('%Y-%m-%d %H:%M')}")
     _separator("═")
+
+    _print_agent_summary(run_id)
 
     scans = db.get_symbol_scans(run_id)
     if not scans:
-        print("  No symbol scans found.")
+        print("\n  No symbol scans found.")
+        _separator("═")
         return
 
     print(f"\n  {'SYMBOL':<8} {'SCORE':>5}  {'DIR':<8}  {'RSI':>5}  "
@@ -68,7 +114,6 @@ def _print_report(run_id: int):
     for c in contracts:
         if c["symbol"] != current_sym:
             current_sym = c["symbol"]
-            # Find the parent symbol scan score
             sym_scan = next((s for s in scans if s["symbol"] == current_sym), None)
             score_str = f"score={sym_scan['technical_score']:.1f}" if sym_scan else ""
             print(f"\n  CONTRACTS — {current_sym} ({sym_scan['direction'] if sym_scan else ''}, {score_str})")
@@ -92,12 +137,10 @@ def _print_report(run_id: int):
     _separator("═")
 
 
-def run_pipeline(symbols: list[str] = None, resume_run_id: int = None):
-    symbols = symbols or SCAN_UNIVERSE
-
+def run_pipeline(symbols: list[str] = None, resume_run_id: int = None, phase1_only: bool = False):
     if resume_run_id:
         run_id = resume_run_id
-        _log(f"Resuming run_id={run_id} — skipping flow+quant, re-running options scanner")
+        _log(f"Resuming run_id={run_id} — skipping all agents, re-running options scanner")
         n = options_scanner.run(run_id)
         _print_report(run_id)
         db.complete_run(run_id,
@@ -105,25 +148,42 @@ def run_pipeline(symbols: list[str] = None, resume_run_id: int = None):
                         contracts_found=n)
         return run_id
 
-    run_id = db.create_run(phase=1)
-    _log(f"Starting Phase 1 pipeline | run_id={run_id} | {len(symbols)} symbols")
+    run_id = db.create_run(phase=2 if not phase1_only else 1)
+    _log(f"Starting {'Phase 1' if phase1_only else 'Phase 2'} pipeline | run_id={run_id}")
 
     try:
-        # ── Step 1: Flow scanner ──────────────────────────────────────────
-        _log("Step 1/3 — Flow scanner")
-        flow_scanner.run(run_id, symbols)
+        if not phase1_only:
+            # ── Phase 2: Intelligence layer ───────────────────────────────────
+            _log("Step 1/6 — SCOUT (Perplexity research)")
+            scout.run(run_id)
 
-        # ── Step 2: Quant engine ──────────────────────────────────────────
-        _log("Step 2/3 — Quant engine")
+            _log("Step 2/6 — ATLAS (market regime)")
+            atlas.run(run_id)
+
+            _log("Step 3/6 — COMPASS (sector rotation)")
+            compass.run(run_id)
+
+            # COMPASS narrows the symbol universe for the downstream steps
+            active_symbols = compass.get_filtered_universe(run_id)
+            _log(f"COMPASS filtered universe: {active_symbols}")
+        else:
+            active_symbols = symbols or SCAN_UNIVERSE
+            _log(f"Phase 1 mode — using {len(active_symbols)} symbols (no AI agents)")
+
+        # ── Phase 1: Market scan ──────────────────────────────────────────
+        step_base = 4 if not phase1_only else 1
+        _log(f"Step {step_base}/6 — Flow scanner ({len(active_symbols)} symbols)")
+        flow_scanner.run(run_id, active_symbols)
+
+        _log(f"Step {step_base+1}/6 — Quant engine")
         quant.run(run_id)
 
-        # ── Step 3: Options scanner ───────────────────────────────────────
-        _log("Step 3/3 — Options scanner")
+        _log(f"Step {step_base+2}/6 — Options scanner")
         n_contracts = options_scanner.run(run_id)
 
         n_symbols = len(db.get_symbol_scans(run_id))
         db.complete_run(run_id, symbols_scanned=n_symbols, contracts_found=n_contracts)
-        _log(f"Pipeline complete | run_id={run_id}")
+        _log(f"Pipeline complete | run_id={run_id} | {n_symbols} symbols | {n_contracts} contracts")
 
     except Exception as e:
         db.fail_run(run_id, notes=str(e))
@@ -135,8 +195,9 @@ def run_pipeline(symbols: list[str] = None, resume_run_id: int = None):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="NEXUS Phase 1 orchestrator")
-    parser.add_argument("--symbols",       type=str, help="Comma-separated symbol override")
+    parser = argparse.ArgumentParser(description="NEXUS Phase 2 orchestrator")
+    parser.add_argument("--symbols",       type=str, help="Comma-separated symbol override (phase1 mode only)")
+    parser.add_argument("--phase1",        action="store_true", help="Skip Phase 2 AI agents (flow+quant+scanner only)")
     parser.add_argument("--resume-run-id", type=int, help="Resume from an existing run (options scan only)")
     parser.add_argument("--init-db",       action="store_true", help="Initialise DB schema and exit")
     args = parser.parse_args()
@@ -147,4 +208,4 @@ if __name__ == "__main__":
         sys.exit(0)
 
     symbols = args.symbols.split(",") if args.symbols else None
-    run_pipeline(symbols=symbols, resume_run_id=args.resume_run_id)
+    run_pipeline(symbols=symbols, resume_run_id=args.resume_run_id, phase1_only=args.phase1)
