@@ -54,6 +54,36 @@ def call_openai(
     return result, usage
 
 
+def call_anthropic(
+    messages: list,
+    system: str,
+    model: str = "claude-opus-4-8",
+    max_tokens: int = 2048,
+) -> tuple[str, dict]:
+    """
+    Call Anthropic Claude.
+    Returns (text_response, usage).
+    messages must use Anthropic format: [{"role": "user", "content": "..."}]
+    """
+    import anthropic
+    client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+    t0 = time.time()
+    response = client.messages.create(
+        model=model,
+        max_tokens=max_tokens,
+        system=system,
+        messages=messages,
+    )
+    latency_ms = int((time.time() - t0) * 1000)
+    content = response.content[0].text
+    return content, {
+        "tokens_in":  response.usage.input_tokens,
+        "tokens_out": response.usage.output_tokens,
+        "latency_ms": latency_ms,
+        "model":      model,
+    }
+
+
 def call_perplexity(
     query: str,
     model: str = "sonar-pro",
