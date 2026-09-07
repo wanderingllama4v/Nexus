@@ -1,17 +1,19 @@
 """
-nexus.py — NEXUS Phase 3 Orchestrator
+nexus.py — NEXUS Phase 4 Orchestrator
 
-Full pipeline:
+Full 12-step pipeline:
   Phase 2:  SCOUT → ATLAS → COMPASS
   Phase 1:  flow_scanner → quant → options_scanner
-  Phase 3:  HUNTER → EDGE → ANALYST → report
+  Phase 3:  HUNTER → EDGE
+  Phase 4:  SENTINEL → JUDGE → GUARDIAN → ANALYST → report
 
 Usage:
-  python nexus.py                            # full Phase 3 pipeline
-  python nexus.py --phase1                   # flow+quant+scanner only (no LLM)
-  python nexus.py --phase2                   # Phase 2 + scan, skip HUNTER/EDGE/ANALYST
+  python nexus.py                            # full Phase 4 pipeline
+  python nexus.py --phase1                   # scan only (no AI agents)
+  python nexus.py --phase2                   # Phase 2 + scan, skip Phase 3-4
+  python nexus.py --phase3                   # through HUNTER+EDGE, skip SENTINEL/JUDGE/GUARDIAN
   python nexus.py --symbols NVDA,AAPL,TSLA  # symbol override (phase1 mode)
-  python nexus.py --resume-run-id 42         # re-run from options scanner only
+  python nexus.py --resume-run-id 42         # re-run from options scanner on existing run
   python nexus.py --init-db                  # create tables and exit
 """
 
@@ -30,6 +32,9 @@ import components.atlas           as atlas
 import components.compass         as compass
 import components.hunter          as hunter
 import components.edge            as edge
+import components.sentinel        as sentinel
+import components.judge           as judge
+import components.guardian        as guardian
 import components.analyst         as analyst
 
 
@@ -42,7 +47,6 @@ def _separator(char: str = "─", width: int = 70):
 
 
 def _pj(row: dict) -> dict:
-    """Parse agent_output row's output_data field."""
     if not row:
         return {}
     try:
@@ -81,6 +85,37 @@ def _print_analyst_brief(run_id: int):
             print(f"    • {r}")
 
 
+def _print_guardian_decisions(run_id: int):
+    row = db.get_agent_output(run_id, "guardian")
+    if not row:
+        return _print_edge_decisions(run_id)  # fall back to EDGE for Phase 3 runs
+    d = _pj(row)
+    decisions = d.get("final_decisions", [])
+    if not decisions:
+        return
+
+    approved = d.get("approved_count", 0)
+    total_risk = d.get("total_risk_approved_pct", 0)
+    limits = d.get("hard_limits_triggered", [])
+
+    print(f"\n  GUARDIAN DECISIONS  "
+          f"(approved={approved}, total_risk={total_risk:.2f}%"
+          f"{', limits='+str(limits) if limits else ''})")
+    _separator()
+    for dec in decisions:
+        v = dec.get("verdict", "?")
+        sym = dec.get("contract_symbol", "?")
+        if v == "APPROVED":
+            print(f"  APPROVED  {sym:<36} "
+                  f"x{dec.get('contracts','?')}  "
+                  f"entry=${dec.get('entry_price',0):.2f}  "
+                  f"stop=${dec.get('stop_loss',0):.2f}  "
+                  f"target=${dec.get('profit_target_1',0):.2f}/${dec.get('profit_target_2',0):.2f}  "
+                  f"risk=${dec.get('dollar_risk',0):.0f} ({dec.get('risk_pct',0):.2f}%)")
+        else:
+            print(f"  REJECTED  {sym:<36} {dec.get('rejection_reason','')}")
+
+
 def _print_edge_decisions(run_id: int):
     row = db.get_agent_output(run_id, "edge")
     if not row:
@@ -89,12 +124,11 @@ def _print_edge_decisions(run_id: int):
     decisions = d.get("decisions", [])
     if not decisions:
         return
-
     print(f"\n  EDGE DECISIONS  (session={d.get('session','?')}, "
           f"overall_go={d.get('overall_go','?')})")
     _separator()
     for dec in decisions:
-        v = dec.get("verdict", "?")
+        v   = dec.get("verdict", "?")
         sym = dec.get("contract_symbol", "?")
         if v == "GO":
             print(f"  GO     {sym:<36} "
@@ -102,18 +136,16 @@ def _print_edge_decisions(run_id: int):
                   f"stop=${dec.get('stop_loss',0):.2f}  "
                   f"target=${dec.get('profit_target_1',0):.2f}/${dec.get('profit_target_2',0):.2f}  "
                   f"qty={dec.get('suggested_contracts',1)}")
-            if dec.get("timing_note"):
-                print(f"         {dec['timing_note']}")
         else:
-            reason = dec.get("no_go_reason") or dec.get("timing_note", "")
-            print(f"  {v:<6} {sym:<36} {reason}")
+            print(f"  {v:<6} {sym:<36} "
+                  f"{dec.get('no_go_reason') or dec.get('timing_note','')}")
 
 
 def _print_agent_summary(run_id: int):
-    """Print ATLAS + COMPASS context (Phase 2) and HUNTER picks."""
-    atlas_row   = db.get_agent_output(run_id, "atlas")
-    compass_row = db.get_agent_output(run_id, "compass")
-    hunter_row  = db.get_agent_output(run_id, "hunter")
+    atlas_row    = db.get_agent_output(run_id, "atlas")
+    compass_row  = db.get_agent_output(run_id, "compass")
+    sentinel_row = db.get_agent_output(run_id, "sentinel")
+    hunter_row   = db.get_agent_output(run_id, "hunter")
 
     if atlas_row:
         d = _pj(atlas_row)
@@ -129,11 +161,20 @@ def _print_agent_summary(run_id: int):
         d = _pj(compass_row)
         top = [s["etf"] for s in d.get("ranked_sectors", [])[:5]]
         filtered = d.get("filtered_universe", [])
-        print(f"\n  COMPASS: bias={d.get('direction_bias','?')}  "
-              f"sectors={top}")
+        print(f"\n  COMPASS: bias={d.get('direction_bias','?')}  sectors={top}")
         print(f"  Universe ({len(filtered)}): {', '.join(filtered)}")
         if d.get("avoid_symbols"):
             print(f"  Avoiding: {d['avoid_symbols']}")
+
+    if sentinel_row:
+        d = _pj(sentinel_row)
+        budget = d.get("risk_budget", {})
+        print(f"\n  SENTINEL: portfolio_risk={d.get('portfolio_risk','?')}  "
+              f"net_liq=${d.get('net_liq',0):,.0f}  "
+              f"risk_per_trade={budget.get('risk_per_trade_pct','?')}%  "
+              f"max_total={budget.get('max_total_new_risk_pct','?')}%")
+        if d.get("risk_flags"):
+            print(f"  Flags: {d['risk_flags']}")
 
     if hunter_row:
         d = _pj(hunter_row)
@@ -144,16 +185,15 @@ def _print_agent_summary(run_id: int):
                   f"entry=${p.get('entry_price',0):.2f}  "
                   f"stop=${p.get('stop_loss',0):.2f}  "
                   f"conviction={p.get('conviction','?')}")
-            thesis = p.get("thesis", "")
-            if thesis:
-                print(f"    Thesis: {thesis[:120]}")
+            if p.get("thesis"):
+                print(f"    Thesis: {p['thesis'][:120]}")
 
-    _print_edge_decisions(run_id)
+    _print_guardian_decisions(run_id)
 
 
 def _print_report(run_id: int):
     _separator("═")
-    print(f"  NEXUS — PHASE 3 REPORT   run_id={run_id}   {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    print(f"  NEXUS — PHASE 4 REPORT   run_id={run_id}   {datetime.now().strftime('%Y-%m-%d %H:%M')}")
     _separator("═")
 
     _print_agent_summary(run_id)
@@ -201,7 +241,6 @@ def _print_report(run_id: int):
     print(f"  {len(scans)} symbols scored | {len(contracts)} contracts found")
     _separator("═")
 
-    # ANALYST brief always printed last
     _print_analyst_brief(run_id)
 
 
@@ -210,6 +249,7 @@ def run_pipeline(
     resume_run_id: int = None,
     phase1_only: bool = False,
     phase2_only: bool = False,
+    phase3_only: bool = False,
 ):
     if resume_run_id:
         run_id = resume_run_id
@@ -221,20 +261,28 @@ def run_pipeline(
                         contracts_found=n)
         return run_id
 
-    phase = 1 if phase1_only else (2 if phase2_only else 3)
+    if phase1_only:
+        phase = 1
+    elif phase2_only:
+        phase = 2
+    elif phase3_only:
+        phase = 3
+    else:
+        phase = 4
+
     run_id = db.create_run(phase=phase)
     _log(f"Starting Phase {phase} pipeline | run_id={run_id}")
 
     try:
         if not phase1_only:
             # ── Phase 2: Intelligence layer ───────────────────────────────────
-            _log("Step 1/9 — SCOUT (research)")
+            _log("Step 1/12 — SCOUT (research)")
             scout.run(run_id)
 
-            _log("Step 2/9 — ATLAS (regime)")
+            _log("Step 2/12 — ATLAS (regime)")
             atlas.run(run_id)
 
-            _log("Step 3/9 — COMPASS (sector rotation)")
+            _log("Step 3/12 — COMPASS (sector rotation)")
             compass.run(run_id)
 
             active_symbols = compass.get_filtered_universe(run_id)
@@ -245,24 +293,35 @@ def run_pipeline(
 
         # ── Phase 1: Market scan ──────────────────────────────────────────
         step = 4 if not phase1_only else 1
-        _log(f"Step {step}/9 — Flow scanner")
+        _log(f"Step {step}/12 — Flow scanner")
         flow_scanner.run(run_id, active_symbols)
 
-        _log(f"Step {step+1}/9 — Quant engine")
+        _log(f"Step {step+1}/12 — Quant engine")
         quant.run(run_id)
 
-        _log(f"Step {step+2}/9 — Options scanner")
+        _log(f"Step {step+2}/12 — Options scanner")
         n_contracts = options_scanner.run(run_id)
 
         if not phase1_only and not phase2_only:
             # ── Phase 3: Decision layer ───────────────────────────────────────
-            _log("Step 7/9 — HUNTER (contract selection)")
+            _log("Step 7/12 — HUNTER (contract selection)")
             hunter.run(run_id)
 
-            _log("Step 8/9 — EDGE (entry timing)")
+            _log("Step 8/12 — EDGE (entry timing)")
             edge.run(run_id)
 
-            _log("Step 9/9 — ANALYST (trade brief)")
+            if not phase3_only:
+                # ── Phase 4: Risk layer ───────────────────────────────────────
+                _log("Step 9/12  — SENTINEL (portfolio risk)")
+                sentinel.run(run_id)
+
+                _log("Step 10/12 — JUDGE (position sizing)")
+                judge.run(run_id)
+
+                _log("Step 11/12 — GUARDIAN (final approval)")
+                guardian.run(run_id)
+
+            _log("Step 12/12 — ANALYST (trade brief)")
             analyst.run(run_id)
 
         n_symbols = len(db.get_symbol_scans(run_id))
@@ -279,10 +338,11 @@ def run_pipeline(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="NEXUS Phase 3 orchestrator")
-    parser.add_argument("--symbols",       type=str, help="Comma-separated symbol override (phase1 mode only)")
-    parser.add_argument("--phase1",        action="store_true", help="Flow+quant+scanner only, no AI agents")
-    parser.add_argument("--phase2",        action="store_true", help="Phase 2 + scan, skip HUNTER/EDGE/ANALYST")
+    parser = argparse.ArgumentParser(description="NEXUS Phase 4 orchestrator")
+    parser.add_argument("--symbols",       type=str, help="Comma-separated symbol override (phase1 only)")
+    parser.add_argument("--phase1",        action="store_true", help="Scan only — no AI agents")
+    parser.add_argument("--phase2",        action="store_true", help="SCOUT+ATLAS+COMPASS+scan, skip Phase 3-4")
+    parser.add_argument("--phase3",        action="store_true", help="Through HUNTER+EDGE+ANALYST, skip SENTINEL/JUDGE/GUARDIAN")
     parser.add_argument("--resume-run-id", type=int, help="Resume from options scanner on existing run")
     parser.add_argument("--init-db",       action="store_true", help="Initialise DB schema and exit")
     args = parser.parse_args()
@@ -298,4 +358,5 @@ if __name__ == "__main__":
         resume_run_id=args.resume_run_id,
         phase1_only=args.phase1,
         phase2_only=args.phase2,
+        phase3_only=args.phase3,
     )

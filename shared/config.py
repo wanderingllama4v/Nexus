@@ -120,6 +120,15 @@ SYMBOL_SECTORS = {
     "XLE":   ["XLE"],
 }
 
+# ── Risk management (Phase 4: SENTINEL + JUDGE + GUARDIAN) ───────────────────
+RISK = {
+    "risk_per_trade_pct":     1.5,   # % of account net_liq to risk per trade
+    "max_total_new_risk_pct": 5.0,   # % cap across all new trades in one run
+    "max_sector_risk_pct":    60.0,  # % of risk budget allowed in one sector
+    "earnings_blackout_days": 1,     # reject option trades N days before earnings
+    "min_account_net_liq":    5_000, # skip trading if account below this
+}
+
 # ── LLM models ────────────────────────────────────────────────────────────────
 LLM = {
     "atlas":   "gpt-4o",

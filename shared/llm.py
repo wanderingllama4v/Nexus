@@ -84,6 +84,40 @@ def call_anthropic(
     }
 
 
+def call_anthropic_json(
+    messages: list,
+    system: str,
+    model: str = "claude-opus-4-8",
+    max_tokens: int = 2048,
+) -> tuple[dict, dict]:
+    """
+    Call Claude and parse a JSON block from the response.
+    Appends a JSON instruction to the system prompt.
+    Returns (parsed_dict, usage) — same signature as call_openai.
+    """
+    import re
+    json_system = system + (
+        "\n\nIMPORTANT: End your response with your structured output wrapped "
+        "in a ```json code block. Do not include any text after the closing ```."
+    )
+    content, usage = call_anthropic(
+        messages=messages,
+        system=json_system,
+        model=model,
+        max_tokens=max_tokens,
+    )
+    try:
+        m = re.search(r"```json\s*(\{.*?\})\s*```", content, re.DOTALL)
+        if m:
+            return json.loads(m.group(1)), usage
+        m = re.search(r"(\{.*\})", content, re.DOTALL)
+        if m:
+            return json.loads(m.group(1)), usage
+    except Exception:
+        pass
+    return {"_raw": content}, usage
+
+
 def call_perplexity(
     query: str,
     model: str = "sonar-pro",

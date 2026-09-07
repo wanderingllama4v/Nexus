@@ -358,3 +358,66 @@ def get_account_balance() -> tuple[float, float]:
     except Exception as e:
         print(f"[tastytrade] get_account_balance error: {e}")
         return None, None
+
+
+def get_account_info() -> dict:
+    """
+    Returns {net_liq, cash, buying_power} for risk sizing.
+    net_liq is total account value (cash + positions).
+    """
+    if is_mock_mode():
+        return {"net_liq": 50_000.0, "cash": 25_000.0, "buying_power": 25_000.0}
+    try:
+        from tastytrade import Account
+        session = get_session()
+        account_list = _run(Account.get(session, TT_ACCOUNT_ID) if TT_ACCOUNT_ID else Account.get(session))
+        account = account_list[0] if isinstance(account_list, list) else account_list
+        bal = _run(account.get_balances(session))
+        net_liq = float(
+            getattr(bal, "net_liquidating_value", None)
+            or getattr(bal, "net_liq", None)
+            or getattr(bal, "cash_balance", 0)
+            or 0
+        )
+        cash = float(getattr(bal, "cash_balance", 0) or 0)
+        buying_power = float(
+            getattr(bal, "derivative_buying_power", None)
+            or getattr(bal, "cash_available_to_withdraw", None)
+            or 0
+        )
+        return {"net_liq": net_liq, "cash": cash, "buying_power": buying_power}
+    except Exception as e:
+        print(f"[tastytrade] get_account_info error: {e}")
+        return {"net_liq": 0.0, "cash": 0.0, "buying_power": 0.0}
+
+
+def get_positions() -> list[dict]:
+    """
+    Returns open equity option positions.
+    Each entry: {symbol, quantity, direction, avg_price, unrealized_pnl}
+    Returns [] if no positions or on error.
+    """
+    if is_mock_mode():
+        return []
+    try:
+        from tastytrade import Account
+        session = get_session()
+        account_list = _run(Account.get(session, TT_ACCOUNT_ID) if TT_ACCOUNT_ID else Account.get(session))
+        account = account_list[0] if isinstance(account_list, list) else account_list
+        positions = _run(account.get_positions(session))
+        result = []
+        for p in positions:
+            itype = str(getattr(p, "instrument_type", "")).replace("_", " ").upper()
+            if "OPTION" not in itype:
+                continue
+            result.append({
+                "symbol":         str(getattr(p, "symbol", "")),
+                "quantity":       int(getattr(p, "quantity", 0)),
+                "direction":      str(getattr(p, "quantity_direction", "Long")),
+                "avg_price":      float(getattr(p, "average_open_price", 0) or 0),
+                "unrealized_pnl": float(getattr(p, "unrealized_day_gain_loss", 0) or 0),
+            })
+        return result
+    except Exception as e:
+        print(f"[tastytrade] get_positions error: {e}")
+        return []

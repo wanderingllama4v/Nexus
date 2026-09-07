@@ -104,20 +104,37 @@ def _build_context(run_id: int) -> str:
         for i, p in enumerate(picks, 1)
     ) or "  No picks identified."
 
-    # EDGE decisions
-    edge_row = db.get_agent_output(run_id, "edge")
-    edge = _parse_json(edge_row) if edge_row else {}
-    decisions = edge.get("decisions", [])
-    decision_lines = "\n".join(
-        f"  {d.get('verdict','?'):<6} {d.get('contract_symbol','?')}  "
-        f"limit=${d.get('limit_price',0):.2f}  "
-        f"stop=${d.get('stop_loss',0):.2f}  "
-        f"qty={d.get('suggested_contracts',0)}  "
-        f"{d.get('timing_note','') or d.get('no_go_reason','')}"
-        for d in decisions
-    ) or "  No decisions issued."
-    overall_go = edge.get("overall_go", False)
+    # GUARDIAN final decisions (Phase 4) or EDGE decisions (Phase 3)
+    guardian_row = db.get_agent_output(run_id, "guardian")
+    edge_row     = db.get_agent_output(run_id, "edge")
 
+    if guardian_row:
+        guardian = _parse_json(guardian_row)
+        decisions = guardian.get("final_decisions", [])
+        overall_go = guardian.get("approved_count", 0) > 0
+        decision_lines = "\n".join(
+            f"  {d.get('verdict','?'):<8} {d.get('contract_symbol','?')}  "
+            f"x{d.get('contracts','?')}  "
+            f"entry=${d.get('entry_price',0):.2f}  "
+            f"stop=${d.get('stop_loss',0):.2f}  "
+            f"risk=${d.get('dollar_risk',0):.0f} ({d.get('risk_pct',0):.2f}%)  "
+            f"{d.get('rejection_reason','') or ''}"
+            for d in decisions
+        ) or "  No final decisions."
+    else:
+        edge = _parse_json(edge_row) if edge_row else {}
+        decisions = edge.get("decisions", [])
+        overall_go = edge.get("overall_go", False)
+        decision_lines = "\n".join(
+            f"  {d.get('verdict','?'):<6} {d.get('contract_symbol','?')}  "
+            f"limit=${d.get('limit_price',0):.2f}  "
+            f"stop=${d.get('stop_loss',0):.2f}  "
+            f"qty={d.get('suggested_contracts',0)}  "
+            f"{d.get('timing_note','') or d.get('no_go_reason','')}"
+            for d in decisions
+        ) or "  No decisions issued."
+
+    decision_label = "[GUARDIAN — FINAL DECISIONS]" if guardian_row else "[EDGE — EXECUTION DECISIONS]"
     return f"""NEXUS TRADE BRIEF — {now}  (run_id={run_id})
 {'='*70}
 
@@ -142,7 +159,7 @@ def _build_context(run_id: int) -> str:
 [HUNTER — TRADE PICKS]
 {pick_lines}
 
-[EDGE — EXECUTION DECISIONS]
+{decision_label}
   Overall GO: {overall_go}
 {decision_lines}
 {'='*70}"""
