@@ -17,8 +17,11 @@ Endpoints:
   POST /monitor       → check open positions vs stop/target
 """
 
+import asyncio
 import json
+import os
 import threading
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Optional
 
@@ -32,7 +35,28 @@ import nexus as nexus_pipeline
 import components.executor as executor
 import components.monitor as monitor
 
-app = FastAPI(title="NEXUS", version="5.0.0")
+_IS_PAPER = os.getenv("TT_PAPER", "true").lower() == "true"
+
+
+async def _monitor_loop():
+    """Check open positions every 10 seconds. Runs in background for the life of the server."""
+    while True:
+        await asyncio.sleep(10)
+        try:
+            if db.get_open_trades():
+                await asyncio.to_thread(monitor.check_all, _IS_PAPER)
+        except Exception as e:
+            print(f"[monitor-loop] {e}")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    task = asyncio.create_task(_monitor_loop())
+    yield
+    task.cancel()
+
+
+app = FastAPI(title="NEXUS", version="5.0.0", lifespan=lifespan)
 
 
 # ── Health ─────────────────────────────────────────────────────────────────────
