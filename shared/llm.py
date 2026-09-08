@@ -12,14 +12,18 @@ import time
 from openai import OpenAI
 
 
+_TIMEOUT = 90.0  # seconds per LLM call — fail fast rather than hang forever
+
+
 def _openai() -> OpenAI:
-    return OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    return OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=_TIMEOUT)
 
 
 def _perplexity() -> OpenAI:
     return OpenAI(
         api_key=os.getenv("PERPLEXITY_API_KEY"),
         base_url="https://api.perplexity.ai",
+        timeout=_TIMEOUT,
     )
 
 
@@ -66,7 +70,7 @@ def call_anthropic(
     messages must use Anthropic format: [{"role": "user", "content": "..."}]
     """
     import anthropic
-    client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+    client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"), timeout=_TIMEOUT)
     t0 = time.time()
     response = client.messages.create(
         model=model,
