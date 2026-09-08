@@ -8,10 +8,23 @@ The schema is created on first connect if tables don't exist.
 import os
 import psycopg2
 import psycopg2.extras
+import psycopg2.extensions
 from contextlib import contextmanager
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# psycopg2 doesn't natively adapt numpy scalar types — register adapters so
+# np.float64/int64 values don't leak into SQL as "np.float64(...)" literals.
+try:
+    import numpy as np
+    psycopg2.extensions.register_adapter(np.float64, lambda v: psycopg2.extensions.AsIs(float(v)))
+    psycopg2.extensions.register_adapter(np.float32, lambda v: psycopg2.extensions.AsIs(float(v)))
+    psycopg2.extensions.register_adapter(np.int64,   lambda v: psycopg2.extensions.AsIs(int(v)))
+    psycopg2.extensions.register_adapter(np.int32,   lambda v: psycopg2.extensions.AsIs(int(v)))
+    psycopg2.extensions.register_adapter(np.bool_,   lambda v: psycopg2.extensions.AsIs(bool(v)))
+except ImportError:
+    pass
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://nexus:nexus@localhost:5432/nexus")
 
