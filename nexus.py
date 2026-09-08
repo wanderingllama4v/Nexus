@@ -19,8 +19,11 @@ Usage:
 
 import argparse
 import json
+import os
 import sys
 from datetime import datetime
+
+_IS_PAPER = os.getenv("TT_PAPER", "true").lower() == "true"
 
 from shared import db
 from shared.config import SCAN_UNIVERSE
@@ -325,8 +328,9 @@ def run_pipeline(
             _log("Step 12/12 — ANALYST (trade brief)")
             analyst.run(run_id)
 
-            # EXECUTOR: record GUARDIAN APPROVED trades to DB (always dry run in pipeline)
-            executor.run(run_id, dry_run=True)
+            # Auto-execute on paper account; dry_run on live (requires manual /execute?live=true)
+            executor.run(run_id, dry_run=not _IS_PAPER)
+            _log(f"Executor: {'paper auto-executed' if _IS_PAPER else 'dry-run recorded (use /execute?live=true to go live)'}")
 
         n_symbols = len(db.get_symbol_scans(run_id))
         db.complete_run(run_id, symbols_scanned=n_symbols, contracts_found=n_contracts)
