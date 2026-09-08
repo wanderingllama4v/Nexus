@@ -312,6 +312,98 @@ def get_agent_outputs(run_id: int, agent_prefix: str = None) -> list:
         return cur.fetchall()
 
 
+# ── Trade helpers (Phase 5) ───────────────────────────────────────────────────
+
+def insert_trade(run_id: int, data: dict) -> int:
+    """Insert a new trade record. Returns the new trade id."""
+    import json as _json
+    with cursor() as cur:
+        cur.execute(
+            """INSERT INTO trades
+               (run_id, contract_scan_id, symbol, contract_symbol,
+                option_type, direction, strike, expiry, dte_at_entry,
+                decision, final_score, sentinel_flagged, guardian_blocked,
+                entry_price, stop_price, target_price, contracts, status,
+                opened_at, notes)
+               VALUES
+               (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+               RETURNING id""",
+            (
+                run_id,
+                data.get("contract_scan_id"),
+                data["symbol"],
+                data["contract_symbol"],
+                data["option_type"],
+                data.get("direction", "BULLISH"),
+                data.get("strike"),
+                data.get("expiry"),
+                data.get("dte_at_entry"),
+                data.get("decision", "TRADE"),
+                data.get("final_score"),
+                data.get("sentinel_flagged", False),
+                data.get("guardian_blocked", False),
+                data.get("entry_price"),
+                data.get("stop_price"),
+                data.get("target_price"),
+                data.get("contracts"),
+                data.get("status", "pending"),
+                data.get("opened_at"),
+                _json.dumps(data.get("notes")) if data.get("notes") else None,
+            ),
+        )
+        return cur.fetchone()["id"]
+
+
+def get_open_trades() -> list:
+    with cursor() as cur:
+        cur.execute(
+            """SELECT * FROM trades
+               WHERE status IN ('pending','open')
+               ORDER BY created_at DESC""",
+        )
+        return cur.fetchall()
+
+
+def get_trade_history(limit: int = 50) -> list:
+    with cursor() as cur:
+        cur.execute(
+            """SELECT * FROM trades
+               WHERE status IN ('closed','expired')
+               ORDER BY closed_at DESC NULLS LAST
+               LIMIT %s""",
+            (limit,),
+        )
+        return cur.fetchall()
+
+
+def get_trade(trade_id: int) -> dict | None:
+    with cursor() as cur:
+        cur.execute("SELECT * FROM trades WHERE id = %s", (trade_id,))
+        return cur.fetchone()
+
+
+def close_trade(trade_id: int, exit_price: float, pnl: float, pnl_pct: float, exit_reason: str):
+    with cursor() as cur:
+        cur.execute(
+            """UPDATE trades
+               SET exit_price = %s, pnl = %s, pnl_pct = %s,
+                   exit_reason = %s, status = 'closed', closed_at = NOW()
+               WHERE id = %s""",
+            (exit_price, pnl, pnl_pct, exit_reason, trade_id),
+        )
+
+
+def open_trade(trade_id: int, order_id: str = None):
+    with cursor() as cur:
+        cur.execute(
+            """UPDATE trades
+               SET status = 'open', opened_at = NOW(),
+                   notes = COALESCE(notes, '{}'::jsonb) || %s::jsonb
+               WHERE id = %s""",
+            (f'{{"order_id": "{order_id}"}}' if order_id else '{}', trade_id),
+        )
+
+
 def update_run_regime(run_id: int, regime: str):
     with cursor() as cur:
         cur.execute(

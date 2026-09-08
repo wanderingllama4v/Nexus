@@ -36,6 +36,7 @@ import components.sentinel        as sentinel
 import components.judge           as judge
 import components.guardian        as guardian
 import components.analyst         as analyst
+import components.executor        as executor
 
 
 def _log(msg: str):
@@ -323,6 +324,9 @@ def run_pipeline(
 
             _log("Step 12/12 — ANALYST (trade brief)")
             analyst.run(run_id)
+
+            # EXECUTOR: record GUARDIAN APPROVED trades to DB (always dry run in pipeline)
+            executor.run(run_id, dry_run=True)
 
         n_symbols = len(db.get_symbol_scans(run_id))
         db.complete_run(run_id, symbols_scanned=n_symbols, contracts_found=n_contracts)
