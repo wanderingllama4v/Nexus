@@ -200,7 +200,8 @@ def get_option_chain_structure(ticker: str, expiry: str) -> list[dict]:
 async def _fetch_dxfeed(streamer_symbols: list[str], timeout: float = 6.0) -> dict:
     """
     Subscribe to Quote, Greeks, Summary, and Trade for all streamer symbols.
-    Collects the first event of each type per symbol then returns.
+    Uses asyncio.timeout() (Python 3.11+) so cancellation is clean and the
+    DXLinkStreamer's internal TaskGroup doesn't raise ExceptionGroup on timeout.
 
     Returns {streamer_symbol: {bid, ask, delta, gamma, theta, vega, iv,
                                open_interest, day_volume, last_price}}
@@ -217,50 +218,53 @@ async def _fetch_dxfeed(streamer_symbols: list[str], timeout: float = 6.0) -> di
         "trade":   set(streamer_symbols),
     }
 
-    async def all_done():
+    def _all_done() -> bool:
         return all(len(v) == 0 for v in remaining.values())
 
+    stop = asyncio.Event()
+
+    async def drain(event_type, key):
+        async for ev in streamer.listen(event_type):
+            sym = ev.event_symbol
+            if sym in results:
+                if key == "quote":
+                    results[sym]["bid"] = float(ev.bid_price or 0)
+                    results[sym]["ask"] = float(ev.ask_price or 0)
+                elif key == "greeks":
+                    results[sym]["delta"]      = float(ev.delta      or 0)
+                    results[sym]["gamma"]      = float(ev.gamma      or 0)
+                    results[sym]["theta"]      = float(ev.theta      or 0)
+                    results[sym]["vega"]       = float(ev.vega       or 0)
+                    results[sym]["iv"]         = float(ev.volatility or 0)
+                    results[sym]["last_price"] = float(ev.price      or 0)
+                elif key == "summary":
+                    results[sym]["open_interest"] = int(ev.open_interest or 0)
+                elif key == "trade":
+                    results[sym]["day_volume"] = int(ev.day_volume or 0)
+                remaining[key].discard(sym)
+            if _all_done() or stop.is_set():
+                break
+
     try:
-        async with DXLinkStreamer(session) as streamer:
-            await streamer.subscribe(Quote,   list(streamer_symbols))
-            await streamer.subscribe(Greeks,  list(streamer_symbols))
-            await streamer.subscribe(Summary, list(streamer_symbols))
-            await streamer.subscribe(Trade,   list(streamer_symbols))
-
-            deadline = _bg_loop.time() + timeout
-
-            # Drain all event types until we have everything or time out
-            async def drain(event_type, key):
-                async for ev in streamer.listen(event_type):
-                    sym = ev.event_symbol
-                    if sym not in results:
-                        continue
-                    if key == "quote":
-                        results[sym]["bid"] = float(ev.bid_price or 0)
-                        results[sym]["ask"] = float(ev.ask_price or 0)
-                    elif key == "greeks":
-                        results[sym]["delta"] = float(ev.delta      or 0)
-                        results[sym]["gamma"] = float(ev.gamma      or 0)
-                        results[sym]["theta"] = float(ev.theta      or 0)
-                        results[sym]["vega"]  = float(ev.vega       or 0)
-                        results[sym]["iv"]    = float(ev.volatility or 0)
-                        results[sym]["last_price"] = float(ev.price or 0)
-                    elif key == "summary":
-                        results[sym]["open_interest"] = int(ev.open_interest or 0)
-                    elif key == "trade":
-                        results[sym]["day_volume"] = int(ev.day_volume or 0)
-                    remaining[key].discard(sym)
-                    if await all_done() or _bg_loop.time() > deadline:
-                        break
-
-            await asyncio.gather(
-                drain(Quote,   "quote"),
-                drain(Greeks,  "greeks"),
-                drain(Summary, "summary"),
-                drain(Trade,   "trade"),
-            )
+        async with asyncio.timeout(timeout):
+            async with DXLinkStreamer(session) as streamer:
+                await streamer.subscribe(Quote,   list(streamer_symbols))
+                await streamer.subscribe(Greeks,  list(streamer_symbols))
+                await streamer.subscribe(Summary, list(streamer_symbols))
+                await streamer.subscribe(Trade,   list(streamer_symbols))
+                await asyncio.gather(
+                    drain(Quote,   "quote"),
+                    drain(Greeks,  "greeks"),
+                    drain(Summary, "summary"),
+                    drain(Trade,   "trade"),
+                )
+    except TimeoutError:
+        stop.set()  # signal drains to exit on next event
     except Exception as e:
-        print(f"[tastytrade] DXFeed fetch error: {e}")
+        # ExceptionGroup (from DXLinkStreamer's internal TaskGroup) is a subclass of Exception
+        inner = getattr(e, 'exceptions', None)
+        msg = str(inner[0]) if inner else str(e)
+        print(f"[tastytrade] DXFeed fetch error: {msg}")
 
     return results
 
@@ -291,7 +295,8 @@ def get_dxfeed_data(streamer_symbols: list[str], timeout: float = 6.0) -> dict:
             for s in streamer_symbols
         }
     try:
-        return _run(_fetch_dxfeed(streamer_symbols, timeout), timeout=timeout + 5)
+        # Use _fetch_dxfeed's own asyncio.timeout — no outer timeout needed
+        return _run(_fetch_dxfeed(streamer_symbols, timeout), timeout=timeout + 10)
     except Exception as e:
         print(f"[tastytrade] get_dxfeed_data error: {e}")
         return {}

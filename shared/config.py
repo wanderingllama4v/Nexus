@@ -126,7 +126,7 @@ RISK = {
     "max_total_new_risk_pct": 5.0,   # % cap across all new trades in one run
     "max_sector_risk_pct":    60.0,  # % of risk budget allowed in one sector
     "earnings_blackout_days": 1,     # reject option trades N days before earnings
-    "min_account_net_liq":    5_000, # skip trading if account below this
+    "min_account_net_liq":    100,   # paper account threshold (fund via TT paper reset for live)
 }
 
 # ── LLM models ────────────────────────────────────────────────────────────────
