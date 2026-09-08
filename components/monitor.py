@@ -14,6 +14,7 @@ Standalone:
 
 import argparse
 import json
+import time
 from datetime import date, datetime
 
 from shared import db
@@ -24,25 +25,42 @@ def _log(msg: str):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] [monitor] {msg}")
 
 
+# Price cache — refreshed at most every 2 seconds per contract.
+# Prevents overlapping DXFeed calls when the monitor loop runs at 1s intervals.
+_price_cache: dict[str, tuple[float, float]] = {}  # symbol -> (price, timestamp)
+_CACHE_TTL = 2.0
+
+
 def _get_current_price(contract_symbol: str, symbol: str) -> float | None:
     """
-    Try to get current mid price for an option contract.
-    Falls back to underlying quote if DXFeed fails.
+    Return mid price for an option contract, using a 2s cache to avoid
+    overlapping DXFeed requests when called at 1-second intervals.
     """
+    now = time.monotonic()
+    cached = _price_cache.get(contract_symbol)
+    if cached and (now - cached[1]) < _CACHE_TTL:
+        return cached[0]
+
+    price = None
     try:
         data = get_dxfeed_data([contract_symbol], timeout=4.0)
         d = data.get(contract_symbol, {})
         bid = d.get("bid", 0)
         ask = d.get("ask", 0)
         if bid and ask:
-            return round((bid + ask) / 2, 2)
-        if d.get("last_price"):
-            return float(d["last_price"])
+            price = round((bid + ask) / 2, 2)
+        elif d.get("last_price"):
+            price = float(d["last_price"])
     except Exception:
         pass
-    # Underlying fallback — less useful but better than nothing
-    q = get_equity_quote(symbol)
-    return q["price"] if q else None
+
+    if price is None:
+        q = get_equity_quote(symbol)
+        price = q["price"] if q else None
+
+    if price is not None:
+        _price_cache[contract_symbol] = (price, now)
+    return price
 
 
 def check_all(auto_close: bool = False) -> list[dict]:
