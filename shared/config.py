@@ -129,6 +129,8 @@ RISK = {
     "min_account_net_liq":    100,   # paper account threshold (fund via TT paper reset for live)
     "sim_entry_slippage_pct": 0.5,   # sim entry: pay 0.5% above mid (realistic fill)
     "sim_exit_slippage_pct":  1.0,   # sim exit: receive 1.0% below mid (wider spread at close)
+    "sim_account_net_liq":    25_000, # virtual account size for sim mode
+    "sim_buying_power":       25_000, # virtual buying power for sim mode
 }
 
 # ── LLM models ────────────────────────────────────────────────────────────────

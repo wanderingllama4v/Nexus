@@ -13,12 +13,15 @@ Standalone:
 
 import argparse
 import json
+import os
 from datetime import datetime
 
 from shared import db
 from shared.config import LLM, RISK
 from shared.llm import call_anthropic_json
 from shared.tastytrade_client import get_account_info, get_positions
+
+_IS_SIM = os.getenv("TT_PAPER", "true").lower() == "true"
 
 
 def _log(msg: str):
@@ -142,12 +145,20 @@ def run(run_id: int) -> dict:
     Assess portfolio risk for this run's proposed trades.
     Writes to agent_outputs. Returns risk assessment dict.
     """
-    # Get account state
-    account   = get_account_info()
-    positions = get_positions()
+    # Get account state — use virtual sim balance in paper/sim mode
+    if _IS_SIM:
+        account = {
+            "net_liq":      RISK["sim_account_net_liq"],
+            "buying_power": RISK["sim_buying_power"],
+        }
+        positions = []
+    else:
+        account   = get_account_info()
+        positions = get_positions()
     _log(f"Account: net_liq=${account['net_liq']:,.0f}  "
          f"buying_power=${account['buying_power']:,.0f}  "
-         f"open_positions={len(positions)}")
+         f"open_positions={len(positions)}"
+         f"{' [SIM]' if _IS_SIM else ''}")
 
     # Get proposed trades from EDGE
     edge_row = db.get_agent_output(run_id, "edge")
