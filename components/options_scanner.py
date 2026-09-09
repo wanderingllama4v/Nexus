@@ -2,8 +2,8 @@
 components/options_scanner.py — Options chain scanner
 
 Reads top-ranked symbol_scans for a run_id (BULLISH or BEARISH only),
-fetches options chains via Tastytrade DXFeed, applies filters, scores
-contracts, and writes to contract_scans.
+fetches options chains via yfinance (reliable HTTP, no WebSocket hang),
+filters and scores contracts, and writes to contract_scans.
 
 Standalone usage:
   python -m components.options_scanner --run-id 42
@@ -11,15 +11,14 @@ Standalone usage:
 """
 
 import argparse
+import math
 from datetime import datetime, date
 
+import yfinance as yf
+
 from shared import db
-from shared.config import SCANNER, QUANT
-from shared.tastytrade_client import (
-    get_option_expirations,
-    get_option_chain_structure,
-    get_dxfeed_data,
-)
+from shared.config import SCANNER, QUANT, RISK_FREE_RATE
+from shared.tastytrade_client import get_option_expirations
 
 
 def _log(msg: str):
@@ -31,6 +30,61 @@ def _dte(expiry_str: str) -> int:
         return (date.fromisoformat(expiry_str) - date.today()).days
     except Exception:
         return -1
+
+
+def _norm_cdf(x: float) -> float:
+    return (1.0 + math.erf(x / math.sqrt(2.0))) / 2.0
+
+
+def _bs_delta(S: float, K: float, T: float, sigma: float, r: float, option_type: str) -> float:
+    """Black-Scholes delta. Returns 0 on bad inputs."""
+    if T <= 0 or sigma <= 0 or S <= 0 or K <= 0:
+        return 0.0
+    try:
+        d1 = (math.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * math.sqrt(T))
+        return _norm_cdf(d1) if option_type == "call" else _norm_cdf(d1) - 1.0
+    except Exception:
+        return 0.0
+
+
+def _yfinance_chain(symbol: str, expiry: str, option_type: str, stock_price: float) -> dict:
+    """
+    Fetch option chain via yfinance for one symbol/expiry/type.
+    Returns {strike: {bid, ask, iv, volume, open_interest, delta, gamma, theta, vega, contract_symbol}}
+    """
+    try:
+        ticker = yf.Ticker(symbol)
+        chain = ticker.option_chain(expiry)
+        df = chain.calls if option_type == "call" else chain.puts
+        T = max(_dte(expiry), 0) / 365.0
+        result = {}
+        for _, row in df.iterrows():
+            K = float(row.get("strike", 0) or 0)
+            if K <= 0:
+                continue
+            bid = float(row.get("bid", 0) or 0)
+            ask = float(row.get("ask", 0) or 0)
+            iv = float(row.get("impliedVolatility", 0) or 0)
+            volume = int(row.get("volume", 0) or 0)
+            oi = int(row.get("openInterest", 0) or 0)
+            occ = str(row.get("contractSymbol", "") or "")
+            delta = _bs_delta(stock_price, K, T, iv, RISK_FREE_RATE, option_type)
+            result[K] = {
+                "bid":             bid,
+                "ask":             ask,
+                "iv":              iv,
+                "day_volume":      volume,
+                "open_interest":   oi,
+                "delta":           delta,
+                "gamma":           0.0,
+                "theta":           0.0,
+                "vega":            0.0,
+                "contract_symbol": occ,
+            }
+        return result
+    except Exception as e:
+        _log(f"yfinance chain error {symbol} {expiry}: {e}")
+        return {}
 
 
 def _score_contract(delta_abs: float, spread_pct: float, oi: int, volume: int, dte: int) -> float:
@@ -99,7 +153,6 @@ def scan_symbol(symbol: str, direction: str, symbol_scan_id: int, run_id: int, p
         _log(f"{symbol}: no expirations available")
         return 0
 
-    today = date.today()
     qualifying_expiries = [
         e for e in expirations
         if SCANNER["min_dte"] <= _dte(e) <= SCANNER["max_dte"]
@@ -108,56 +161,32 @@ def scan_symbol(symbol: str, direction: str, symbol_scan_id: int, run_id: int, p
         _log(f"{symbol}: no expiries in DTE range {SCANNER['min_dte']}-{SCANNER['max_dte']}")
         return 0
 
-    _log(f"{symbol} ({direction}): scanning {len(qualifying_expiries)} expiries")
+    _log(f"{symbol} ({direction}): scanning {len(qualifying_expiries)} expiries via yfinance")
 
     all_contracts = []
 
     for expiry in qualifying_expiries:
         dte = _dte(expiry)
-        strikes = get_option_chain_structure(symbol, expiry)
-        if not strikes:
+        chain_data = _yfinance_chain(symbol, expiry, option_type, price)
+        if not chain_data:
             continue
 
-        # Collect the relevant streamer symbols (call or put side)
-        streamer_map = {}  # streamer_symbol -> strike info
-        for s in strikes:
-            ss = s["call_streamer"] if option_type == "call" else s["put_streamer"]
-            occ = s["call_occ"] if option_type == "call" else s["put_occ"]
-            if ss:
-                streamer_map[ss] = {
-                    "strike":      s["strike"],
-                    "option_type": option_type,
-                    "expiry":      expiry,
-                    "dte":         dte,
-                    "occ":         occ,
-                }
-
-        if not streamer_map:
-            continue
-
-        # Fetch live data for all streamer symbols in one DXFeed call
-        dxfeed = get_dxfeed_data(list(streamer_map.keys()), timeout=SCANNER["dxfeed_timeout"])
-
-        for ss, info in streamer_map.items():
-            data = dxfeed.get(ss, {})
-            if not data:
-                continue
-
-            bid = float(data.get("bid") or 0)
-            ask = float(data.get("ask") or 0)
+        for K, data in chain_data.items():
+            bid = data["bid"]
+            ask = data["ask"]
             if bid <= 0 or ask <= 0:
                 continue
 
             mid = (bid + ask) / 2
             spread_pct = ((ask - bid) / mid * 100) if mid > 0 else 999
 
-            delta_raw = float(data.get("delta") or 0)
+            delta_raw = data["delta"]
             delta_abs = abs(delta_raw)
-            iv        = float(data.get("iv") or 0)
-            oi        = int(data.get("open_interest") or 0)
-            volume    = int(data.get("day_volume") or 0)
+            iv = data["iv"]
+            oi = data["open_interest"]
+            volume = data["day_volume"]
+            occ = data["contract_symbol"]
 
-            # ── Filters ────────────────────────────────────────────────
             if not (SCANNER["min_delta"] <= delta_abs <= SCANNER["max_delta"]):
                 continue
             if spread_pct > SCANNER["max_spread_pct"]:
@@ -173,10 +202,10 @@ def scan_symbol(symbol: str, direction: str, symbol_scan_id: int, run_id: int, p
 
             all_contracts.append({
                 "symbol":          symbol,
-                "contract_symbol": info["occ"],
+                "contract_symbol": occ,
                 "expiry":          expiry,
                 "dte":             dte,
-                "strike":          info["strike"],
+                "strike":          K,
                 "option_type":     option_type,
                 "bid":             round(bid, 4),
                 "ask":             round(ask, 4),
@@ -185,9 +214,9 @@ def scan_symbol(symbol: str, direction: str, symbol_scan_id: int, run_id: int, p
                 "open_interest":   oi,
                 "day_volume":      volume,
                 "delta":           round(delta_raw, 4),
-                "gamma":           round(float(data.get("gamma") or 0), 6),
-                "theta":           round(float(data.get("theta") or 0), 4),
-                "vega":            round(float(data.get("vega")  or 0), 4),
+                "gamma":           0.0,
+                "theta":           0.0,
+                "vega":            0.0,
                 "iv":              round(iv, 4),
                 "contract_score":  contract_score,
             })
@@ -220,7 +249,6 @@ def run(run_id: int, symbol_filter: str = None):
         _log(f"No symbol scans found for run_id={run_id}")
         return 0
 
-    # Only scan symbols with a directional signal; cap at top_symbols_to_scan
     directional = [
         s for s in scans
         if s["direction"] in ("BULLISH", "BEARISH")

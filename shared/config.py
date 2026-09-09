@@ -127,6 +127,8 @@ RISK = {
     "max_sector_risk_pct":    60.0,  # % of risk budget allowed in one sector
     "earnings_blackout_days": 1,     # reject option trades N days before earnings
     "min_account_net_liq":    100,   # paper account threshold (fund via TT paper reset for live)
+    "sim_entry_slippage_pct": 0.5,   # sim entry: pay 0.5% above mid (realistic fill)
+    "sim_exit_slippage_pct":  1.0,   # sim exit: receive 1.0% below mid (wider spread at close)
 }
 
 # ── LLM models ────────────────────────────────────────────────────────────────
