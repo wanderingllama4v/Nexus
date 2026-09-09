@@ -62,11 +62,25 @@ def _yfinance_chain(symbol: str, expiry: str, option_type: str, stock_price: flo
             K = float(row.get("strike", 0) or 0)
             if K <= 0:
                 continue
-            bid = float(row.get("bid", 0) or 0)
-            ask = float(row.get("ask", 0) or 0)
-            iv = float(row.get("impliedVolatility", 0) or 0)
-            volume = int(row.get("volume", 0) or 0)
-            oi = int(row.get("openInterest", 0) or 0)
+            def _safe_float(v):
+                try:
+                    f = float(v or 0)
+                    return 0.0 if (f != f) else f  # NaN check
+                except Exception:
+                    return 0.0
+
+            def _safe_int(v):
+                try:
+                    f = float(v or 0)
+                    return 0 if (f != f) else int(f)
+                except Exception:
+                    return 0
+
+            bid = _safe_float(row.get("bid"))
+            ask = _safe_float(row.get("ask"))
+            iv = _safe_float(row.get("impliedVolatility"))
+            volume = _safe_int(row.get("volume"))
+            oi = _safe_int(row.get("openInterest"))
             occ = str(row.get("contractSymbol", "") or "")
             delta = _bs_delta(stock_price, K, T, iv, RISK_FREE_RATE, option_type)
             result[K] = {
