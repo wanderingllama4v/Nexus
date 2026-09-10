@@ -18,11 +18,18 @@ import yfinance as yf
 
 from shared import db
 from shared.config import SCANNER, QUANT, RISK_FREE_RATE
-from shared.tastytrade_client import get_option_expirations
 
 
 def _log(msg: str):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] [scanner] {msg}")
+
+
+def _get_expirations(symbol: str) -> list[str]:
+    """Get available option expiration dates from yfinance."""
+    try:
+        return list(yf.Ticker(symbol).options)
+    except Exception:
+        return []
 
 
 def _dte(expiry_str: str) -> int:
@@ -162,7 +169,7 @@ def scan_symbol(symbol: str, direction: str, symbol_scan_id: int, run_id: int, p
     Returns number of contracts written.
     """
     option_type = "call" if direction == "BULLISH" else "put"
-    expirations = get_option_expirations(symbol)
+    expirations = _get_expirations(symbol)
     if not expirations:
         _log(f"{symbol}: no expirations available")
         return 0

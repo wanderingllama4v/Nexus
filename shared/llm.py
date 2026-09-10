@@ -124,35 +124,50 @@ def call_anthropic_json(
 
 def call_perplexity(
     query: str,
-    model: str = "sonar-pro",
+    model: str = "perplexity/sonar",
 ) -> tuple[str, dict]:
     """
-    Call Perplexity for web-grounded research.
+    Call Perplexity Agent API (/v1/responses) for web-grounded research.
+    Perplexity migrated sonar to /v1/responses; model is now "perplexity/sonar".
     Returns (text_response, usage).
     """
-    client = _perplexity()
-    t0 = time.time()
-    response = client.chat.completions.create(
-        model=model,
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You are a financial research assistant for an algorithmic options trading system. "
-                    "Be concise and factual. Focus only on information that could move markets or "
-                    "affect options pricing today. Skip general commentary."
-                ),
-            },
-            {"role": "user", "content": query},
-        ],
-    )
-    latency_ms = int((time.time() - t0) * 1000)
-    content = response.choices[0].message.content
+    import httpx
 
-    usage = response.usage
+    api_key = os.getenv("PERPLEXITY_API_KEY", "")
+    system_prompt = (
+        "You are a financial research assistant for an algorithmic options trading system. "
+        "Be concise and factual. Focus only on information that could move markets or "
+        "affect options pricing today. Skip general commentary."
+    )
+    t0 = time.time()
+    resp = httpx.post(
+        "https://api.perplexity.ai/v1/responses",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": model,
+            "instructions": system_prompt,
+            "input": query,
+        },
+        timeout=_TIMEOUT,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    latency_ms = int((time.time() - t0) * 1000)
+
+    # Extract text: output[*].content[*] where type=="output_text"
+    content = ""
+    for item in data.get("output", []):
+        for part in item.get("content", []):
+            if part.get("type") == "output_text":
+                content += part.get("text", "")
+
+    usage = data.get("usage", {})
     return content, {
-        "tokens_in":  usage.prompt_tokens     if usage else 0,
-        "tokens_out": usage.completion_tokens if usage else 0,
+        "tokens_in":  usage.get("input_tokens", 0),
+        "tokens_out": usage.get("output_tokens", 0),
         "latency_ms": latency_ms,
         "model":      model,
     }

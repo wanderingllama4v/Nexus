@@ -142,5 +142,5 @@ LLM = {
     "judge":   "gpt-4o",       # Phase 4
     "analyst": "claude-opus-4-8",  # Phase 3
     "sentinel":"claude-opus-4-8",  # Phase 4
-    "scout":   "sonar-pro",    # Perplexity
+    "scout":   "perplexity/sonar",  # Perplexity Agent API
 }
