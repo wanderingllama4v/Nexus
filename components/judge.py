@@ -90,6 +90,8 @@ def _build_prompt(sized: list, sentinel: dict, net_liq: float, budget: dict) -> 
         f"contracts={s['contracts']}  "
         f"entry=${s['entry_price']:.2f}  "
         f"stop=${s['stop_loss']:.2f} ({s.get('stop_loss_pct',0):.1f}%)  "
+        f"target1=${s.get('profit_target_1') or 0:.2f}  "
+        f"target2=${s.get('profit_target_2') or 0:.2f}  "
         f"risk=${s['dollar_risk']:.0f} ({s['risk_pct']:.2f}%)"
         for s in sized
     )
@@ -189,6 +191,15 @@ def run(run_id: int) -> dict:
     messages = _build_prompt(sized, sentinel, net_liq, budget)
     _log(f"Calling OpenAI ({LLM['judge']}) to validate sizing")
     result, usage = call_openai(messages, model=LLM["judge"], json_mode=True)
+
+    # Merge calculated profit targets in case GPT dropped them
+    sized_map = {s["contract_symbol"]: s for s in sized}
+    for t in result.get("sized_trades", []):
+        src = sized_map.get(t.get("contract_symbol"), {})
+        if not t.get("profit_target_1") and src.get("profit_target_1"):
+            t["profit_target_1"] = src["profit_target_1"]
+        if not t.get("profit_target_2") and src.get("profit_target_2"):
+            t["profit_target_2"] = src["profit_target_2"]
 
     approved = [t for t in result.get("sized_trades", []) if t.get("verdict") == "APPROVED"]
 

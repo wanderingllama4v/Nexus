@@ -85,13 +85,28 @@ def _build_prompt(
         "Every pick must have a clear, specific thesis and well-defined entry, stop, and target levels."
     )
 
+    # Derive regime-implied preferred direction for HUNTER
+    regime_upper = regime.upper()
+    if "RISK_OFF" in regime_upper or "BEAR" in regime_upper:
+        implied_dir = "BEARISH (prefer puts; calls need exceptional justification)"
+    elif "RISK_ON" in regime_upper or "BULL" in regime_upper:
+        implied_dir = "BULLISH (prefer calls; puts need exceptional justification)"
+    else:
+        implied_dir = direction  # fall back to COMPASS
+
     user = f"""MARKET CONTEXT:
-  Regime:         {regime} (confidence={confidence}%)
-  Direction bias: {direction}
-  Risk level:     {risk_level}
-  VIX signal:     {vix_signal}
-  Leading sectors: {top_sectors}
-  Symbols to avoid: {avoid_syms}
+  Regime:              {regime} (confidence={confidence}%) ← PRIMARY direction signal
+  Regime-implied dir:  {implied_dir}
+  COMPASS bias:        {direction} ← secondary; defer to regime when they conflict
+  Risk level:          {risk_level}
+  VIX signal:          {vix_signal}
+  Leading sectors:     {top_sectors}
+  Symbols to avoid:    {avoid_syms}
+
+DIRECTION RULE: Use ATLAS regime as the primary signal for put/call alignment.
+  RISK_OFF → bearish puts are regime-aligned. Bullish calls need strong individual justification.
+  RISK_ON  → bullish calls are regime-aligned. Bearish puts need strong individual justification.
+  MIXED/NEUTRAL → either direction is acceptable; pick based on technical strength only.
 
 TOP CONTRACT CANDIDATES (top {len(contracts)} by scanner score):
 {contract_block}
@@ -99,8 +114,8 @@ CATALYST CONTEXT:
 {catalyst_text or 'No specific catalysts identified.'}
 
 Select 1-3 contracts for potential entry. Be selective — skip anything with wide spreads (>3%),
-low OI (<500), or that conflicts with the regime direction. Each pick must have a specific entry
-price (use mid or 1 tick inside), a stop at ~30% below entry, and targets at 1.5x and 2x.
+low OI (<500). Prefer regime-aligned contracts. Each pick must have a specific entry price
+(use mid or 1 tick inside), a stop at ~30% below entry, and targets at 1.5x and 2x.
 
 Respond with a JSON object — no other text:
 {{

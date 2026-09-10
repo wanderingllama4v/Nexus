@@ -58,6 +58,8 @@ def _build_prompt(
         f"x{t.get('contracts','?')}  "
         f"entry=${t.get('entry_price',0):.2f}  "
         f"stop=${t.get('stop_loss',0):.2f}  "
+        f"target1=${t.get('profit_target_1') or 0:.2f}  "
+        f"target2=${t.get('profit_target_2') or 0:.2f}  "
         f"risk=${t.get('dollar_risk',0):.0f} ({t.get('risk_pct',0):.2f}%)  "
         f"judge={t.get('verdict','?')}"
         for t in judge_trades
@@ -193,6 +195,16 @@ def run(run_id: int) -> dict:
         model=LLM["sentinel"],
         max_tokens=1200,
     )
+
+    # Merge profit targets from JUDGE in case Claude dropped them
+    judge_map = {t.get("contract_symbol"): t for t in approved}
+    for d in result.get("final_decisions", []):
+        if d.get("verdict") == "APPROVED":
+            src = judge_map.get(d.get("contract_symbol"), {})
+            if not d.get("profit_target_1") and src.get("profit_target_1"):
+                d["profit_target_1"] = src["profit_target_1"]
+            if not d.get("profit_target_2") and src.get("profit_target_2"):
+                d["profit_target_2"] = src["profit_target_2"]
 
     approved_count  = result.get("approved_count", 0)
     rejected_count  = result.get("rejected_count", 0)
