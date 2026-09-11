@@ -39,9 +39,9 @@ _IS_PAPER = os.getenv("TT_PAPER", "true").lower() == "true"
 
 
 async def _monitor_loop():
-    """Check open positions every second. Runs in background for the life of the server."""
+    """Check open positions every 60s. Runs in background for the life of the server."""
     while True:
-        await asyncio.sleep(1)
+        await asyncio.sleep(60)
         try:
             if db.get_open_trades():
                 await asyncio.to_thread(monitor.check_all, _IS_PAPER)
