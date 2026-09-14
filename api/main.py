@@ -30,7 +30,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from shared import db
-from shared.config import SCAN_UNIVERSE
+from shared.universe import start_universe_refresh, get_universe_status
 import nexus as nexus_pipeline
 import components.executor as executor
 import components.monitor as monitor
@@ -51,6 +51,7 @@ async def _monitor_loop():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    start_universe_refresh()
     task = asyncio.create_task(_monitor_loop())
     yield
     task.cancel()
@@ -64,6 +65,12 @@ app = FastAPI(title="NEXUS", version="5.0.0", lifespan=lifespan)
 @app.get("/health")
 def health():
     return {"status": "ok", "phase": 5, "ts": datetime.utcnow().isoformat()}
+
+
+@app.get("/universe")
+def get_universe():
+    """Current scan universe: core + dynamic (most_actives, gainers, losers)."""
+    return get_universe_status()
 
 
 # ── Pipeline trigger ───────────────────────────────────────────────────────────

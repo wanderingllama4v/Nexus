@@ -26,7 +26,7 @@ from datetime import datetime
 _IS_PAPER = os.getenv("TT_PAPER", "true").lower() == "true"
 
 from shared import db
-from shared.config import SCAN_UNIVERSE
+from shared.universe import get_scan_universe
 import components.flow_scanner    as flow_scanner
 import components.quant           as quant
 import components.options_scanner as options_scanner
@@ -292,7 +292,7 @@ def run_pipeline(
             active_symbols = compass.get_filtered_universe(run_id)
             _log(f"Active universe ({len(active_symbols)}): {active_symbols}")
         else:
-            active_symbols = symbols or SCAN_UNIVERSE
+            active_symbols = symbols or get_scan_universe()
             _log(f"Phase 1 mode — {len(active_symbols)} symbols, no AI agents")
 
         # ── Phase 1: Market scan ──────────────────────────────────────────

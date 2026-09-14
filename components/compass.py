@@ -13,7 +13,8 @@ import json
 from datetime import datetime
 
 from shared import db
-from shared.config import LLM, SECTOR_ETFS, SYMBOL_SECTORS, SCAN_UNIVERSE
+from shared.config import LLM, SECTOR_ETFS, SYMBOL_SECTORS
+from shared.universe import get_scan_universe
 from shared.llm import call_openai
 from shared.tastytrade_client import get_equity_quote
 
@@ -49,7 +50,7 @@ def _build_prompt(atlas_output: dict, sector_perf: list[dict]) -> list:
         for r in sector_perf
     )
 
-    universe_str = ", ".join(SCAN_UNIVERSE)
+    universe_str = ", ".join(get_scan_universe())
 
     system = (
         "You are COMPASS, a sector rotation analyst for an algorithmic options trading system. "
@@ -99,9 +100,10 @@ def filter_universe(recommended: list[str], avoid: list[str]) -> list[str]:
     anchors = {"SPY", "QQQ", "IWM"}
     avoid_set = set(avoid or [])
 
-    filtered = [s for s in SCAN_UNIVERSE
+    current_universe = get_scan_universe()
+    filtered = [s for s in current_universe
                 if s in anchors or
-                (s in (recommended or SCAN_UNIVERSE) and s not in avoid_set)]
+                (s in (recommended or current_universe) and s not in avoid_set)]
 
     # Deduplicate while preserving order
     seen = set()
@@ -167,12 +169,12 @@ def get_filtered_universe(run_id: int) -> list[str]:
     """
     row = db.get_agent_output(run_id, "compass")
     if not row:
-        return SCAN_UNIVERSE
+        return get_scan_universe()
     try:
         data = json.loads(row["output_data"]) if isinstance(row["output_data"], str) else row["output_data"]
-        return data.get("filtered_universe") or SCAN_UNIVERSE
+        return data.get("filtered_universe") or get_scan_universe()
     except Exception:
-        return SCAN_UNIVERSE
+        return get_scan_universe()
 
 
 if __name__ == "__main__":
