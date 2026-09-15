@@ -166,9 +166,9 @@ def _score_contract(delta_abs: float, spread_pct: float, oi: int, volume: int, d
 def scan_symbol(symbol: str, direction: str, symbol_scan_id: int, run_id: int, price: float):
     """
     Scan all qualifying expiries for a symbol and write top contracts to DB.
+    Scans BOTH calls and puts so HUNTER can select whichever is regime-aligned.
     Returns number of contracts written.
     """
-    option_type = "call" if direction == "BULLISH" else "put"
     expirations = _get_expirations(symbol)
     if not expirations:
         _log(f"{symbol}: no expirations available")
@@ -182,65 +182,66 @@ def scan_symbol(symbol: str, direction: str, symbol_scan_id: int, run_id: int, p
         _log(f"{symbol}: no expiries in DTE range {SCANNER['min_dte']}-{SCANNER['max_dte']}")
         return 0
 
-    _log(f"{symbol} ({direction}): scanning {len(qualifying_expiries)} expiries via yfinance")
+    _log(f"{symbol} ({direction}): scanning {len(qualifying_expiries)} expiries via yfinance (calls+puts)")
 
     all_contracts = []
 
     for expiry in qualifying_expiries:
         dte = _dte(expiry)
-        chain_data = _yfinance_chain(symbol, expiry, option_type, price)
-        if not chain_data:
-            continue
-
-        for K, data in chain_data.items():
-            bid = data["bid"]
-            ask = data["ask"]
-            if bid <= 0 or ask <= 0:
+        for option_type in ("call", "put"):
+            chain_data = _yfinance_chain(symbol, expiry, option_type, price)
+            if not chain_data:
                 continue
 
-            mid = (bid + ask) / 2
-            spread_pct = ((ask - bid) / mid * 100) if mid > 0 else 999
+            for K, data in chain_data.items():
+                bid = data["bid"]
+                ask = data["ask"]
+                if bid <= 0 or ask <= 0:
+                    continue
 
-            delta_raw = data["delta"]
-            delta_abs = abs(delta_raw)
-            iv = data["iv"]
-            oi = data["open_interest"]
-            volume = data["day_volume"]
-            occ = data["contract_symbol"]
+                mid = (bid + ask) / 2
+                spread_pct = ((ask - bid) / mid * 100) if mid > 0 else 999
 
-            if not (SCANNER["min_delta"] <= delta_abs <= SCANNER["max_delta"]):
-                continue
-            if spread_pct > SCANNER["max_spread_pct"]:
-                continue
-            if oi < SCANNER["min_oi"]:
-                continue
-            if volume < SCANNER["min_volume"]:
-                continue
-            if iv > SCANNER["max_iv"]:
-                continue
+                delta_raw = data["delta"]
+                delta_abs = abs(delta_raw)
+                iv = data["iv"]
+                oi = data["open_interest"]
+                volume = data["day_volume"]
+                occ = data["contract_symbol"]
 
-            contract_score = _score_contract(delta_abs, spread_pct, oi, volume, dte)
+                if not (SCANNER["min_delta"] <= delta_abs <= SCANNER["max_delta"]):
+                    continue
+                if spread_pct > SCANNER["max_spread_pct"]:
+                    continue
+                if oi < SCANNER["min_oi"]:
+                    continue
+                if volume < SCANNER["min_volume"]:
+                    continue
+                if iv > SCANNER["max_iv"]:
+                    continue
 
-            all_contracts.append({
-                "symbol":          symbol,
-                "contract_symbol": occ,
-                "expiry":          expiry,
-                "dte":             dte,
-                "strike":          K,
-                "option_type":     option_type,
-                "bid":             round(bid, 4),
-                "ask":             round(ask, 4),
-                "mid":             round(mid, 4),
-                "spread_pct":      round(spread_pct, 2),
-                "open_interest":   oi,
-                "day_volume":      volume,
-                "delta":           round(delta_raw, 4),
-                "gamma":           0.0,
-                "theta":           0.0,
-                "vega":            0.0,
-                "iv":              round(iv, 4),
-                "contract_score":  contract_score,
-            })
+                contract_score = _score_contract(delta_abs, spread_pct, oi, volume, dte)
+
+                all_contracts.append({
+                    "symbol":          symbol,
+                    "contract_symbol": occ,
+                    "expiry":          expiry,
+                    "dte":             dte,
+                    "strike":          K,
+                    "option_type":     option_type,
+                    "bid":             round(bid, 4),
+                    "ask":             round(ask, 4),
+                    "mid":             round(mid, 4),
+                    "spread_pct":      round(spread_pct, 2),
+                    "open_interest":   oi,
+                    "day_volume":      volume,
+                    "delta":           round(delta_raw, 4),
+                    "gamma":           0.0,
+                    "theta":           0.0,
+                    "vega":            0.0,
+                    "iv":              round(iv, 4),
+                    "contract_score":  contract_score,
+                })
 
     # Keep top N by score
     all_contracts.sort(key=lambda c: c["contract_score"], reverse=True)

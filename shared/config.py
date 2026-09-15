@@ -65,7 +65,7 @@ SCANNER = {
     "min_volume":       50,
     "max_iv":           1.50,   # skip contracts with IV > 150%
     "dxfeed_timeout":   6.0,    # seconds to wait for DXFeed events per batch
-    "top_contracts":    5,      # contracts to keep per symbol
+    "top_contracts":    10,     # contracts to keep per symbol (calls+puts combined)
 }
 
 # ── Risk-free rate (used for Black-Scholes fallback in quant_lib) ──────────────

@@ -94,11 +94,13 @@ Respond with a JSON object — no other text:
 
 def filter_universe(recommended: list[str], avoid: list[str]) -> list[str]:
     """
-    Apply COMPASS recommendations to SCAN_UNIVERSE.
-    Always includes SPY, QQQ, IWM as baseline liquidity anchors.
+    Apply COMPASS recommendations to the live universe.
+    Always includes high-liquidity anchors with deep options markets regardless of regime —
+    these are the names HUNTER can actually trade in any market condition.
     """
-    anchors = {"SPY", "QQQ", "IWM"}
-    avoid_set = set(avoid or [])
+    # These names always pass — deep, liquid options chains in every regime
+    anchors = {"SPY", "QQQ", "IWM", "NVDA", "AAPL", "MSFT", "META", "AMZN"}
+    avoid_set = set(s for s in (avoid or []) if s not in anchors)
 
     current_universe = get_scan_universe()
     filtered = [s for s in current_universe
