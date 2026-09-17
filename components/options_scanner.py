@@ -271,19 +271,18 @@ def run(run_id: int, symbol_filter: str = None):
         _log(f"No symbol scans found for run_id={run_id}")
         return 0
 
-    directional = [
-        s for s in scans
-        if s["direction"] in ("BULLISH", "BEARISH")
-    ]
+    # Sort by technical score descending — scan all directions since we fetch
+    # both calls and puts for every symbol now
+    ranked = sorted(scans, key=lambda s: s["technical_score"], reverse=True)
     if symbol_filter:
-        directional = [s for s in directional if s["symbol"] == symbol_filter.upper()]
+        ranked = [s for s in ranked if s["symbol"] == symbol_filter.upper()]
     else:
-        directional = directional[:QUANT["top_symbols_to_scan"]]
+        ranked = ranked[:QUANT["top_symbols_to_scan"]]
 
-    _log(f"{len(directional)} directional symbols to options-scan | run_id={run_id}")
+    _log(f"{len(ranked)} symbols to options-scan | run_id={run_id}")
 
     total = 0
-    for scan in directional:
+    for scan in ranked:
         symbol    = scan["symbol"]
         direction = scan["direction"]
         price     = float(scan["price"] or 0)
